@@ -6,6 +6,9 @@ export const MATERIALS = {
   al7075: { name: 'Aluminium 7075-T6', E: 71700, nu: 0.33, rho: 2.81e-6, yield: 460, cost: 9.0 },
   dc04: { name: 'Mild steel DC04', E: 210000, nu: 0.3, rho: 7.85e-6, yield: 210, cost: 1.2 },
   dp800: { name: 'Dual-phase DP800', E: 210000, nu: 0.3, rho: 7.85e-6, yield: 500, cost: 1.8 },
+  ss304: { name: 'Stainless 304 (annealed)', E: 193000, nu: 0.29, rho: 7.93e-6, yield: 215, cost: 4.0 },
+  ss316: { name: 'Stainless 316L', E: 193000, nu: 0.29, rho: 7.98e-6, yield: 170, cost: 5.5 },
+  ss301: { name: 'Stainless 301 1/2-hard', E: 193000, nu: 0.29, rho: 7.88e-6, yield: 760, cost: 5.0 },
   ti64: { name: 'Titanium Ti-6Al-4V', E: 114000, nu: 0.34, rho: 4.43e-6, yield: 880, cost: 40 },
   cfrp: { name: 'CFRP quasi-isotropic', E: 55000, nu: 0.3, rho: 1.55e-6, yield: 450, cost: 60 },
 };
