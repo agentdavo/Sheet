@@ -1171,6 +1171,7 @@ $('#fileInput').addEventListener('change', async (e) => {
 // ------------------------------------------------------------------ start
 state.cfg = loadCfg();
 buildToolbar();
+suspView.onPose = updatePoseHud;
 updatePoseHud();
 fullReload();
 setStatus(`Ready - ${viewer.isWebGPU ? 'WebGPU' : 'WebGL2'} renderer. Run the FEA from the right panel.`);

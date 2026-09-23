@@ -10,7 +10,7 @@ const RAMP = ['#0d366b', '#104281', '#184f95', '#1c5cab', '#256abf', '#2a78d6', 
 const rampRGB = RAMP.map((c) => new THREE.Color(c));
 
 export function rampColor(t, out = new THREE.Color()) {
-  const x = Math.min(1, Math.max(0, t)) * (rampRGB.length - 1);
+  const x = (Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0) * (rampRGB.length - 1);
   const i = Math.min(rampRGB.length - 2, Math.floor(x));
   return out.copy(rampRGB[i]).lerp(rampRGB[i + 1], x - i);
 }
@@ -37,6 +37,10 @@ export class ChassisView {
 
   setMesh(mesh) {
     this.mesh = mesh;
+    // results belong to the previous mesh
+    this.field = null;
+    this.deform = null;
+    this.anim = null;
     const m = mesh.model;
     this.root.clear();
     const ns = m.shells.length / 4;

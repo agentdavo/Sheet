@@ -134,6 +134,7 @@ export class SuspensionView {
   setPose(p) {
     Object.assign(this.pose, p);
     this.update();
+    this.onPose?.(this.pose);
   }
 
   /** Solve all four corners for the current pose; returns solutions (null if a corner locks). */
