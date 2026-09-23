@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sheet Chassis Studio</title>
+    <meta name="description" content="Three.js + WebGPU studio for sheet-metal car chassis: parametric monocoques, shell FEA, double-wishbone kinematics and optimisers." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path d="M3 21 L9 11 L23 11 L29 21 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="9" cy="23" r="3.2" fill="currentColor"/><circle cx="23" cy="23" r="3.2" fill="currentColor"/><path d="M12 11 L14 6 L20 6 L21 11" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span>Sheet Chassis Studio</span>
+      </div>
+      <div class="topbar-mid">
+        <label class="tb-field">Preset
+          <select id="presetSelect"></select>
+        </label>
+        <span id="cfgName" class="muted"></span>
+      </div>
+      <div class="topbar-right">
+        <span id="gpuBadge" class="badge">renderer…</span>
+        <button id="btnExport" class="ghost" title="Export / import">Files ▾</button>
+        <div id="fileMenu" class="menu hidden">
+          <button data-act="save-json">Save design (.json)</button>
+          <button data-act="load-json">Load design (.json)</button>
+          <button data-act="cutlist">Sheet cut list (.csv)</button>
+          <button data-act="hardpoints">Hardpoints (.csv)</button>
+          <button data-act="bdf">FE model - Nastran (.bdf)</button>
+          <button data-act="shot">Screenshot (.png)</button>
+          <button data-act="reset">Reset to preset</button>
+        </div>
+        <input id="fileInput" type="file" accept=".json" hidden />
+      </div>
+    </header>
+    <main class="layout">
+      <aside class="panel left" id="leftPanel">
+        <nav class="tabs" id="leftTabs"></nav>
+        <div class="panel-body" id="leftBody"></div>
+      </aside>
+      <section class="viewport-wrap">
+        <div class="view-toolbar" id="viewToolbar"></div>
+        <div class="viewport" id="viewport">
+          <div class="view-labels" id="viewLabels"></div>
+          <div class="legend hidden" id="legend"></div>
+          <div class="pose-hud" id="poseHud"></div>
+          <div class="hp-hud hidden" id="hpHud"></div>
+        </div>
+        <div class="statusbar" id="statusbar">
+          <span id="statusText">Ready</span>
+          <div class="progress hidden" id="progress"><div id="progressBar"></div></div>
+          <span id="meshStats" class="muted mono"></span>
+        </div>
+      </section>
+      <aside class="panel right" id="rightPanel">
+        <nav class="tabs" id="rightTabs"></nav>
+        <div class="panel-body" id="rightBody"></div>
+      </aside>
+    </main>
+    <div id="tooltip" class="tooltip hidden"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

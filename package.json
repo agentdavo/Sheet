@@ -1,0 +1,19 @@
+{
+  "name": "sheet-chassis-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Three.js + WebGPU sheet-metal chassis design studio: parametric monocoque, shell FEA, double-wishbone kinematics and optimisers.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}
