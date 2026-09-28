@@ -16,11 +16,14 @@ import { cutList, hardpointsCSV, nastranBDF } from './app/exporters.js';
 import { h, $, section, num, check, select, kpi, fmt, fmtK, statusDot, download, safeStorage } from './ui/dom.js';
 import { lineChart, barChart } from './ui/charts.js';
 import { GROUP_COLORS } from './render/chassisView.js';
+import { bucklingCheck, designTwistTorque } from './fea/buckling.js';
+import { beadSection, DEFAULT_BEADS } from './chassis/stiffening.js';
+import { fabricationSummary, PROCESSES, JOINING } from './chassis/fabrication.js';
 
 const STORE_KEY = 'sheet-chassis-cfg-v1';
 const store = safeStorage();
 
-const ANALYSIS_DEFAULTS = { torque: 1000, bendLoad: 5000, solver: 'cpu', modalWithMasses: false, nModes: 6, targetK: 30000 };
+const ANALYSIS_DEFAULTS = { torque: 1000, bendLoad: 5000, solver: 'cpu', modalWithMasses: false, nModes: 6, targetK: 30000, twistFactor: 2, buckleEdges: 'ss' };
 
 const state = {
   cfg: null,
@@ -79,6 +82,8 @@ function normalise(c) {
   out.gauges = { ...base.gauges, ...c.gauges };
   out.tubes = { ...base.tubes, ...c.tubes };
   out.ride = { ...base.ride, ...c.ride };
+  out.chassis.beads = { ...DEFAULT_BEADS, ...base.chassis.beads, ...(c.chassis?.beads || {}) };
+  out.fabrication = { joining: 'seam', process: 'tig', stitchLen: 25, stitchPitch: 75, spotPitch: 40, ...base.fabrication, ...(c.fabrication || {}) };
   out.analysis = { ...ANALYSIS_DEFAULTS, ...(c.analysis || {}) };
   return out;
 }
@@ -89,6 +94,7 @@ function persist() {
 }
 
 const cfg = () => state.cfg;
+const FIELD_OPTIONS = [['material', 'Sheet material'], ['groups', 'Panel groups'], ['thickness', 'Thickness'], ['disp', 'Displacement'], ['vm', 'von Mises stress'], ['sed', 'Strain energy density'], ['buckle', 'Buckling utilisation']];
 
 // ------------------------------------------------------------------ model updates
 function chassisMassCG(mesh) {
@@ -115,12 +121,23 @@ function computeDynamics() {
   state.mp = massProperties(state.cfg, state.chassisMass, state.kin);
   const K = state.fea && !state.feaStale && state.fea.torsion ? state.fea.torsion.K : null;
   state.ride = rideRoll(state.cfg, state.mp, state.kin, K);
+  computeBuckling();
+}
+
+function computeBuckling() {
+  const F = state.fea;
+  if (!F?.torsion?.post?.shellNx || state.feaStale || !state.mp || !state.mesh?.bays) { state.buckle = null; return; }
+  const c = state.cfg;
+  const design = designTwistTorque(state.mp, state.kin.front.trackStatic, c.analysis.twistFactor);
+  state.buckle = bucklingCheck(state.mesh, c, F.torsion.post, F.torsion.torqueNm, design, { edges: c.analysis.buckleEdges });
 }
 
 function rebuildChassis() {
   try {
     const t0 = performance.now();
     state.mesh = buildChassis(state.cfg);
+    chassisView.matMetal.color.set(state.cfg.material.startsWith('ss') ? 0xd3d6da : 0xb4bac2);
+    chassisView.matMetal.roughness = state.cfg.material.startsWith('ss') ? 0.3 : 0.42;
     chassisView.setMesh(state.mesh);
     const st = state.mesh.stats;
     $('#meshStats').textContent = `${st.nodes.toLocaleString()} nodes · ${st.shells.toLocaleString()} shells · ${st.beams} beams · ${st.dofs.toLocaleString()} dof · mesh ${(performance.now() - t0).toFixed(0)} ms`;
@@ -234,7 +251,7 @@ function buildToolbar() {
     tog('RC / IC', () => sv.construction, (v) => suspView.setOption('construction', v), 'Front-view instant centres, roll centres and roll axis'),
     tog('X-ray', () => cv.xray, (v) => chassisView.setOption('xray', v)));
   const fieldSel = h('select', { id: 'fieldSel' },
-    [['material', 'Aluminium'], ['groups', 'Panel groups'], ['thickness', 'Thickness'], ['disp', 'Displacement'], ['vm', 'von Mises stress'], ['sed', 'Strain energy density']].map(([v, t]) => h('option', { value: v }, t)));
+    FIELD_OPTIONS.map(([v, t]) => h('option', { value: v }, t)));
   fieldSel.value = state.field;
   fieldSel.addEventListener('change', () => { state.field = fieldSel.value; applyField(); if (state.rightTab === 'fea') renderRight(); });
   const colour = h('div', { class: 'grp' }, h('span', {}, 'Colour'), fieldSel);
@@ -262,7 +279,15 @@ function applyField() {
   const f = state.field;
   const res = currentResult();
   chassisView.opts.display = f;
-  if (['disp', 'vm', 'sed'].includes(f)) {
+  if (f === 'buckle') {
+    if (!state.buckle) {
+      chassisView.setField(null);
+      chassisView.setOption('display', 'material');
+      setStatus('Run the torsion FEA to see the shear-buckling check.');
+      return;
+    }
+    chassisView.setField({ type: 'buckle', values: state.buckle.util, perNode: false, label: `Buckling utilisation @ ${fmt(state.buckle.designNm / 1000, 1)} kNm`, unit: 'design / critical', digits: 2, threshold: 1 });
+  } else if (['disp', 'vm', 'sed'].includes(f)) {
     if (!res || state.feaStale) {
       chassisView.setField(null);
       chassisView.setOption('display', 'material');
@@ -457,7 +482,7 @@ function chassisPanel() {
       select('Material', T, 'mat', Object.entries(TUBE_MATERIALS).map(([k, v]) => [k, v.name]), { onChange: chg })];
   };
   const gauges = GROUPS.map((g, i) => {
-    const row = num(GROUP_LABELS[g], () => state.cfg.gauges, g, { step: 0.1, min: 0.5, max: 8, unit: 'mm', slider: true, onChange: chg });
+    const row = num(g === 'doublers' ? 'Pick-up doublers (added)' : GROUP_LABELS[g], () => state.cfg.gauges, g, { step: 0.1, min: g === 'doublers' ? 0 : 0.5, max: 8, unit: 'mm', slider: true, onChange: chg });
     row.querySelector('label').prepend(h('i', { style: { display: 'inline-block', width: '9px', height: '9px', borderRadius: '2px', background: GROUP_COLORS[i], marginRight: '6px' } }));
     return row;
   });
@@ -491,6 +516,8 @@ function chassisPanel() {
       ...gauges,
       h('div', { class: 'hint' }, `Standard gauges: ${STANDARD_GAUGES.join(', ')} mm. The gauge optimiser (Optimisers tab) sizes these for minimum mass.`),
     ]),
+    stiffeningSection(chg),
+    fabricationSection(),
     section('Tubes', [...tube('hoop', 'Roll hoops'), ...tube('cage', 'Cage / pillars'), ...tube('brace', 'Braces & crash beams')], { collapsed: true }),
     section('Mesh', [
       num('Target element size', C, 'mesh', { step: 5, min: 30, max: 200, unit: 'mm', onChange: chg, title: 'Smaller = more accurate but slower solves' }),
@@ -547,6 +574,48 @@ function suspensionPanel() {
       table,
     ]),
   ];
+}
+
+function stiffeningSection(chg) {
+  const C = () => state.cfg.chassis;
+  const Bd = () => state.cfg.chassis.beads;
+  const b = state.cfg.chassis.beads;
+  const tFloor = state.cfg.gauges.floor;
+  const bs = beadSection(tFloor, b);
+  const groups = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px', margin: '4px 0' } },
+    GROUPS.filter((g) => g !== 'doublers').map((g) => {
+      const cb = h('input', { type: 'checkbox', id: `bead-${g}` });
+      cb.checked = b.groups.includes(g);
+      cb.addEventListener('change', () => { b.groups = cb.checked ? [...new Set([...b.groups, g])] : b.groups.filter((x) => x !== g); chg(); renderLeft(); });
+      return h('label', { style: { display: 'flex', gap: '4px', alignItems: 'center', fontSize: '12px', color: 'var(--text-secondary)' } }, cb, GROUP_LABELS[g]);
+    }));
+  return section('Stiffening - beads, diaphragms, doublers', [
+    check('Swage beads on flat panels', Bd, 'on', { onChange: () => { chg(); renderLeft(); } }),
+    num('Bead pitch', Bd, 'pitch', { step: 5, min: 40, max: 400, unit: 'mm', onChange: () => { chg(); renderLeft(); } }),
+    num('Bead depth', Bd, 'depth', { step: 0.5, min: 1, max: 20, unit: 'mm', onChange: () => { chg(); renderLeft(); } }),
+    num('Bead width', Bd, 'width', { step: 5, min: 10, max: 120, unit: 'mm', onChange: () => { chg(); renderLeft(); } }),
+    groups,
+    h('div', { class: 'hint' }, b.on
+      ? `At ${tFloor} mm, beads raise bending stiffness along the bead ${bs.Dratio.toFixed(0)}x (the shell uses the geometric mean, ${Math.sqrt(bs.Dratio).toFixed(1)}x) for +${((bs.massF - 1) * 100).toFixed(1)}% material. Beads run across each bay's short span in the buckling check.`
+      : 'Half-sine swage beads across the short span of every bay. They raise panel bending and buckling stiffness for almost no mass.'),
+    num('Sill / tunnel diaphragm pitch', C, 'diaphragmPitch', { step: 50, min: 0, max: 2000, unit: 'mm', onChange: chg, title: '0 = none. Internal bulkheads that stop thin box sections distorting and split long bays.' }),
+    num('Doubler radius at pick-ups', C, 'doublerR', { step: 10, min: 0, max: 250, unit: 'mm', onChange: chg, title: 'Size of the weld-on reinforcing plate around each suspension pick-up (thickness set in Sheet gauges).' }),
+    num('Doubler thickness (added)', () => state.cfg.gauges, 'doublers', { step: 0.5, min: 0, max: 6, unit: 'mm', onChange: chg }),
+  ]);
+}
+
+function fabricationSection() {
+  const Fb = () => state.cfg.fabrication;
+  const f = state.cfg.fabrication;
+  const ch = () => { persist(); renderLeft(); if (state.rightTab === 'fea') renderRight(); };
+  return section('Fabrication & welding', [
+    select('Joining', Fb, 'joining', Object.entries(JOINING), { onChange: ch }),
+    f.joining !== 'spot' ? select('Process', Fb, 'process', Object.entries(PROCESSES).filter(([k]) => k !== 'spot').map(([k, v]) => [k, v.label]), { onChange: ch }) : null,
+    f.joining === 'stitch' ? num('Stitch length', Fb, 'stitchLen', { step: 5, min: 5, unit: 'mm', onChange: ch }) : null,
+    f.joining === 'stitch' ? num('Stitch pitch', Fb, 'stitchPitch', { step: 5, min: 10, unit: 'mm', onChange: ch }) : null,
+    f.joining === 'spot' ? num('Spot pitch', Fb, 'spotPitch', { step: 5, min: 10, unit: 'mm', onChange: ch }) : null,
+    h('div', { class: 'hint' }, 'Weld lengths, time and distortion risk are shown under Structure (FEA).'),
+  ], { collapsed: true });
 }
 
 let animReq = null;
@@ -894,7 +963,9 @@ function feaPanel() {
       kpi('Lightweight index', fmt(Lw, 2), '', 'm/(K·track·wb) ×10³ - lower is better'),
       kpi('Twist @ ' + fmtK(T.torqueNm) + ' Nm', fmt(T.thetaDeg, 4), '°'),
       kpi('Peak von Mises', fmt(percentile(T.post.shellVM, 0.99), 1), 'MPa', `torsion, 99th pct · yield ${MATERIALS[c.material].yield}`),
+      T.hpPeak !== undefined ? kpi('Peak stress at pick-ups', fmt(T.hpPeak, 1), 'MPa', `at ${fmtK(T.torqueNm)} Nm - ${c.gauges.doublers > 0 && c.chassis.doublerR > 0 ? `${c.gauges.doublers} mm doublers` : 'no doublers'}`) : null,
     ));
+    out.push(bucklingSection());
   }
   // display controls
   const lc = h('select', {}, [['torsion', 'Torsion'], ['bending', 'Bending']].map(([v, t]) => h('option', { value: v }, t)));
@@ -909,7 +980,7 @@ function feaPanel() {
   defCb.addEventListener('change', () => { state.deformOn = defCb.checked; updateDeformation(); });
   const smCb = h('input', { type: 'checkbox' }); smCb.checked = state.smooth;
   smCb.addEventListener('change', () => { state.smooth = smCb.checked; applyField(); });
-  const fieldSel = h('select', {}, [['material', 'Aluminium'], ['groups', 'Panel groups'], ['thickness', 'Thickness'], ['disp', 'Displacement'], ['vm', 'von Mises'], ['sed', 'Strain energy density']].map(([v, t]) => h('option', { value: v }, t)));
+  const fieldSel = h('select', {}, FIELD_OPTIONS.map(([v, t]) => h('option', { value: v }, t)));
   fieldSel.value = state.field;
   fieldSel.addEventListener('change', () => { state.field = fieldSel.value; $('#fieldSel').value = state.field; applyField(); });
   out.push(section('Display', [
@@ -944,8 +1015,62 @@ function feaPanel() {
     }));
     out.push(section('Free-free modes', [h('div', { class: 'hint' }, `Shift-invert Lanczos, ${c.analysis.modalWithMasses ? 'with' : 'without'} component masses. Click a mode to animate it.`), list]));
   }
+  out.push(fabricationResults());
   out.push(massSummary());
   return out;
+}
+
+function bucklingSection() {
+  const c = state.cfg;
+  const A = () => state.cfg.analysis;
+  const Bk = state.buckle;
+  const refresh = () => { computeBuckling(); if (state.field === 'buckle') applyField(); renderRight(); };
+  const controls = [
+    num('Design twist factor', A, 'twistFactor', { step: 0.25, min: 0.5, max: 5, unit: '×', onChange: refresh, title: 'Multiple of the front-wheel-lift torque (front wheel static load x front track). 2 covers kerb strikes / potholes.' }),
+    select('Panel edges', A, 'buckleEdges', [['ss', 'Simply supported (conservative)'], ['clamped', 'Clamped (stiff welded flanges)']], { onChange: refresh }),
+  ];
+  if (!Bk) return section('Shear buckling check', [h('div', { class: 'hint' }, 'Re-run the torsion case to compute panel buckling.'), ...controls]);
+  const lvl = Bk.reserve >= 1.5 ? 'good' : Bk.reserve >= 1 ? 'warn' : 'bad';
+  const scale = Bk.designNm / state.fea.torsion.torqueNm;
+  const rows = Bk.bays.slice(0, 8).map((b) => h('tr', {},
+    h('td', { title: b.panel }, b.panel),
+    h('td', {}, `${b.a.toFixed(0)}×${b.b.toFixed(0)}`),
+    h('td', {}, `${fmt(b.t, 1)}${b.beaded ? 'b' : ''}`),
+    h('td', {}, fmt(b.tau * scale, 1)),
+    h('td', {}, fmt(b.tauCr, 1)),
+    h('td', { style: { fontFamily: 'var(--sans)' } }, { 'local yield': 'yield', 'shear buckling': 'shear', 'compression buckling': 'comp.' }[b.mode]),
+    h('td', { class: b.util >= 1 ? 'down' : b.util >= 1 / 1.5 ? '' : 'up' }, fmt(1 / b.util, 2))));
+  const show = h('button', {}, 'Show utilisation on model');
+  show.addEventListener('click', () => { state.field = 'buckle'; $('#fieldSel').value = 'buckle'; state.deformOn = false; applyField(); renderRight(); });
+  return section('Shear buckling check', [
+    h('div', { class: 'kpis' },
+      kpi('Limit twist torque', fmt(Bk.Tcr / 1000, 2), 'kNm', [statusDot(lvl), `reserve ${fmt(Bk.reserve, 2)} · ${Bk.crit ? Bk.crit.mode : ''}`]),
+      kpi('First panel buckling', Number.isFinite(Bk.TcrBuckle) ? fmt(Bk.TcrBuckle / 1000, 2) : '–', 'kNm', Bk.critBuckle ? `${Bk.critBuckle.panel}` : 'no buckling mode'),
+      kpi('Design twist torque', fmt(Bk.designNm / 1000, 2), 'kNm', `${c.analysis.twistFactor}× front wheel lift`),
+      kpi('Bays buckling at design', String(Bk.failingCount), '', Bk.failingCount ? `${fmt(Bk.failingArea, 2)} m² of sheet` : 'none'),
+      kpi('Critical bay', Bk.crit ? `${fmt(Bk.crit.a, 0)}×${fmt(Bk.crit.b, 0)}` : '–', 'mm', Bk.crit ? `${Bk.crit.panel}` : '')),
+    h('div', { class: 'overflow' }, h('table', { class: 'grid' },
+      h('tr', {}, h('th', {}, 'Bay'), h('th', {}, 'a×b mm'), h('th', {}, 't mm'), h('th', {}, 'τ design'), h('th', {}, 'τ cr'), h('th', {}, 'mode'), h('th', {}, 'RF')), rows)),
+    h('div', { class: 'hint' }, `Bays are the sheet areas between welded-on panels and diaphragms. Critical shear from plate theory (k_s = ${c.analysis.buckleEdges === 'clamped' ? '8.98' : '5.35'} + ... /α², orthotropic with beads, 'b' = beaded) combined with compression via R_c + R_s² = 1 and capped at yield. Stresses in MPa at the design torque. Linear elastic - no post-buckling or imperfections, so keep RF above ~1.5.`),
+    ...controls,
+    h('div', { class: 'btnrow' }, show),
+  ]);
+}
+
+function fabricationResults() {
+  if (!state.mesh?.fabrication) return null;
+  const f = fabricationSummary(state.cfg, state.mesh);
+  const lvl = f.level === 'low' ? 'good' : f.level === 'moderate' ? 'warn' : 'bad';
+  return section('Fabrication & welding', [
+    h('div', { class: 'kpis' },
+      kpi('Joint line length', fmt(f.seam, 1), 'm', `${f.diaphragms} diaphragm stations`),
+      f.fab.joining === 'spot' ? kpi('Spot welds', String(f.spots), '', `${f.fab.spotPitch} mm pitch`) : kpi('Weld length', fmt(f.weldLen, 1), 'm', f.fab.joining === 'stitch' ? `${f.fab.stitchLen} on ${f.fab.stitchPitch} mm stitches` : 'continuous'),
+      kpi('Arc-on time (est.)', fmt(f.minutes / 60, 1), 'h', f.processLabel),
+      kpi('Distortion risk', f.level, '', [statusDot(lvl), `${fmt(f.thermal, 1)}× mild steel thermal · ${f.tMin} mm min gauge`]),
+      f.doublers ? kpi('Doublers', `${f.doublers}`, 'plates', `${fmt(f.doublerArea, 2)} m² · ${fmt(f.doublerWeld, 1)} m perimeter weld`) : null),
+    ...f.notes.map((n) => h('div', { class: `callout ${n.level === 'info' ? '' : n.level}` }, n.text)),
+    h('div', { class: 'hint' }, 'Heuristic estimate: arc-on time only (no fit-up or dressing); distortion risk scales with expansion/conductivity, process heat input and 1/t².'),
+  ]);
 }
 
 function massSummary() {

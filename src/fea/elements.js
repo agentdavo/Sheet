@@ -102,7 +102,7 @@ const PLT_DOF = [2, 3, 4, 8, 9, 10, 14, 15, 16, 20, 21, 22]; // w,rx,ry
  * Returns { Km, Kb, frame } where Km (membrane + drilling) and Kb (bending + shear)
  * are 24x24 row-major Float64Arrays in LOCAL coordinates.
  */
-export function shellLocal(X, t, E, nu) {
+export function shellLocal(X, t, E, nu, tb = t) {
   const fr = shellFrame(X);
   const { xl, yl } = fr;
   const Km = new Float64Array(576);
@@ -110,7 +110,7 @@ export function shellLocal(X, t, E, nu) {
   const N = new Float64Array(4), Nx = new Float64Array(4), Ne = new Float64Array(4);
   const c = E / (1 - nu * nu);
   const Dm = [c * t, c * t * nu, 0, c * t * nu, c * t, 0, 0, 0, c * t * (1 - nu) / 2];
-  const db = (E * t * t * t) / (12 * (1 - nu * nu));
+  const db = (E * tb * tb * tb) / (12 * (1 - nu * nu)); // tb: equivalent bending thickness (beads)
   const Db = [db, db * nu, 0, db * nu, db, 0, 0, 0, db * (1 - nu) / 2];
   const ds = KAPPA * (E / (2 * (1 + nu))) * t;
   const gd = 0.01 * (E / (2 * (1 + nu))) * t; // drilling penalty
@@ -263,8 +263,8 @@ export function vecToLocal(ug, R) {
   return ul;
 }
 
-export function shellGlobal(X, t, E, nu) {
-  const L = shellLocal(X, t, E, nu);
+export function shellGlobal(X, t, E, nu, tb = t) {
+  const L = shellLocal(X, t, E, nu, tb);
   const Kl = new Float64Array(576);
   for (let i = 0; i < 576; i++) Kl[i] = L.Km[i] + L.Kb[i];
   return { K: toGlobal(Kl, 24, L.frame.R), local: L };
@@ -274,8 +274,8 @@ export function shellGlobal(X, t, E, nu) {
  * Post-process a shell: returns membrane strains, curvatures (local), top/bottom von Mises
  * and strain-energy split.
  */
-export function shellRecover(X, t, E, nu, ug) {
-  const L = shellLocal(X, t, E, nu);
+export function shellRecover(X, t, E, nu, ug, tb = t) {
+  const L = shellLocal(X, t, E, nu, tb);
   const ul = vecToLocal(ug, L.frame.R);
   let Um = 0, Ub = 0;
   for (let a = 0; a < 24; a++) {
@@ -319,7 +319,9 @@ export function shellRecover(X, t, E, nu, ug) {
   const top = vm(ex + h * kx, ey + h * ky, gxy + h * kxy);
   const bot = vm(ex - h * kx, ey - h * ky, gxy - h * kxy);
   const mem = vm(ex, ey, gxy);
-  return { vm: Math.max(top, bot), vmMem: mem, Um, Ub, area: L.frame.area };
+  // membrane stress resultants (N/mm) in the element frame: x along the first grid direction
+  const nx = c * t * (ex + nu * ey), ny = c * t * (ey + nu * ex), nxy = c * t * ((1 - nu) / 2) * gxy;
+  return { vm: Math.max(top, bot), vmMem: mem, Um, Ub, area: L.frame.area, nx, ny, nxy };
 }
 
 // ---------------------------------------------------------------- beams

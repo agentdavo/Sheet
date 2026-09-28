@@ -5,6 +5,7 @@
 import { buildChassis, GROUPS } from '../chassis/mesh.js';
 import { prepare, solveStatic, postprocess, massModel } from '../fea/model.js';
 import { torsionBC } from '../fea/analysis.js';
+import { applyGauges } from '../chassis/stiffening.js';
 
 export const STANDARD_GAUGES = [0.7, 0.8, 1.0, 1.2, 1.5, 1.6, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0];
 const RAD2DEG = 180 / Math.PI;
@@ -25,18 +26,20 @@ async function torsionOnly(mesh, cfg, iterative) {
 function groupData(model, post) {
   const ng = GROUPS.length;
   const Um = new Float64Array(ng), Ub = new Float64Array(ng), area = new Float64Array(ng), t = new Float64Array(ng);
+  const UbX = new Float64Array(ng); // bending energy weighted by its thickness exponent (3 flat, 2 beaded)
   const cnt = new Float64Array(ng);
   const mm = massModel(model);
   for (let e = 0; e < model.shellT.length; e++) {
     const g = model.shellGroup[e];
     Um[g] += post.shellUm[e]; Ub[g] += post.shellUb[e];
+    UbX[g] += post.shellUb[e] * (model.shellBexp ? model.shellBexp[e] : 3);
     t[g] += model.shellT[e]; cnt[g]++;
   }
   for (let g = 0; g < ng; g++) {
     t[g] = cnt[g] ? t[g] / cnt[g] : 0;
     area[g] = cnt[g] ? (mm.groupMass[GROUPS[g]] || 0) / (model.mat.rho * t[g]) : 0;
   }
-  return { Um, Ub, area, t, cnt, mass: mm.total };
+  return { Um, Ub, UbX, area, t, cnt, mass: mm.total };
 }
 
 /**
@@ -50,7 +53,7 @@ export async function optimiseGauges(cfg, opts) {
   const rho = model.mat.rho;
   const gauges = { ...cfg.gauges };
   const history = [];
-  const apply = () => { for (let e = 0; e < model.shellT.length; e++) model.shellT[e] = gauges[GROUPS[model.shellGroup[e]]]; };
+  const apply = () => applyGauges(mesh, cfg, gauges);
   const active = GROUPS.map((g, i) => (free.includes(g) ? i : -1)).filter((i) => i >= 0);
   let last = null;
   for (let it = 0; it < iters; it++) {
@@ -61,8 +64,8 @@ export async function optimiseGauges(cfg, opts) {
     last = { tr, gd };
     history.push({ it, K: tr.K, mass: gd.mass, gauges: { ...gauges } });
     onProgress && onProgress({ it, iters, K: tr.K, mass: gd.mass, gauges: { ...gauges } });
-    // sensitivities: C = f.u ; dC/dt_g = -(2 Um + 6 Ub)/t  (membrane ~ t, bending ~ t^3)
-    const dC = GROUPS.map((_, g) => (gd.cnt[g] && gd.t[g] ? -(2 * gd.Um[g] + 6 * gd.Ub[g]) / gd.t[g] : 0));
+    // sensitivities: C = f.u ; dC/dt_g = -(2 Um + 2 n Ub)/t  (membrane ~ t, bending ~ t^n)
+    const dC = GROUPS.map((_, g) => (gd.cnt[g] && gd.t[g] ? -(2 * gd.Um[g] + 2 * gd.UbX[g]) / gd.t[g] : 0));
     const dM = GROUPS.map((_, g) => rho * gd.area[g]);
     const Ctarget = tr.C * (tr.K / target); // compliance scales as 1/K for fixed load
     const conv = Math.abs(tr.K - target) / target < 0.005 && it > 2 && Math.abs(history[it - 1].mass - gd.mass) / gd.mass < 0.002;
@@ -115,7 +118,7 @@ export async function optimiseGauges(cfg, opts) {
         if (!gd.cnt[g]) continue;
         const next = STANDARD_GAUGES.find((s) => s > gauges[name] + 1e-9);
         if (!next || next > tMax + 1e-9) continue;
-        const dCg = -(2 * gd.Um[g] + 6 * gd.Ub[g]) / gauges[name];
+        const dCg = -(2 * gd.Um[g] + 2 * gd.UbX[g]) / gauges[name];
         const score = (-dCg * (next - gauges[name])) / (rho * gd.area[g] * (next - gauges[name]));
         if (score > bestScore) { bestScore = score; best = g; }
       }

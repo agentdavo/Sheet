@@ -211,3 +211,5 @@ table.grid .down { color: var(--bad); }
   .panel-body { overflow: visible; }
   .topbar-mid .muted { display: none; }
 }
+
+.overflow { overflow-x: auto; }

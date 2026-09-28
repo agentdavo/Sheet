@@ -19,7 +19,8 @@ export function prepare(model) {
   for (let e = 0; e < ns; e++) {
     const conn = model.shells.subarray(4 * e, 4 * e + 4);
     for (let k = 0; k < 4; k++) for (let c = 0; c < 3; c++) X[3 * k + c] = model.nodes[3 * conn[k] + c];
-    const { K } = shellGlobal(X, model.shellT[e], E, nu);
+    const tm = model.shellTm ? model.shellTm[e] : model.shellT[e];
+    const { K } = shellGlobal(X, tm, E, nu, model.shellTb ? model.shellTb[e] : tm);
     elems.push({ type: 0, idx: e, conn: Array.from(conn), K });
   }
   for (let e = 0; e < nb; e++) {
@@ -224,6 +225,7 @@ export function postprocess(model, u) {
   const shellU = new Float64Array(ns);
   const shellUm = new Float64Array(ns);
   const shellUb = new Float64Array(ns);
+  const shellNx = new Float32Array(ns), shellNy = new Float32Array(ns), shellNxy = new Float32Array(ns);
   const X = new Float64Array(12);
   const ug = new Float64Array(24);
   for (let e = 0; e < ns; e++) {
@@ -232,8 +234,10 @@ export function postprocess(model, u) {
       for (let c = 0; c < 3; c++) X[3 * k + c] = model.nodes[3 * nd + c];
       for (let d = 0; d < 6; d++) ug[6 * k + d] = u[6 * nd + d];
     }
-    const r = shellRecover(X, model.shellT[e], E, nu, ug);
-    shellVM[e] = r.vm;
+    const tm = model.shellTm ? model.shellTm[e] : model.shellT[e];
+    const r = shellRecover(X, tm, E, nu, ug, model.shellTb ? model.shellTb[e] : tm);
+    shellVM[e] = model.shellT[e] !== tm ? (r.vm * tm) / model.shellT[e] : r.vm;
+    shellNx[e] = r.nx; shellNy[e] = r.ny; shellNxy[e] = r.nxy;
     shellUm[e] = r.Um; shellUb[e] = r.Ub; shellU[e] = r.Um + r.Ub;
   }
   const beamVM = new Float32Array(nb);
@@ -248,7 +252,7 @@ export function postprocess(model, u) {
     beamVM[e] = sec.rigid ? 0 : r.vm;
     beamU[e] = r.U;
   }
-  return { shellVM, shellU, shellUm, shellUb, beamVM, beamU };
+  return { shellVM, shellU, shellUm, shellUb, shellNx, shellNy, shellNxy, beamVM, beamU };
 }
 
 /** Structural mass and lumped mass vector (6 dof/node). */
@@ -263,7 +267,7 @@ export function massModel(model) {
   for (let e = 0; e < ns; e++) {
     for (let k = 0; k < 4; k++) for (let c = 0; c < 3; c++) X[3 * k + c] = model.nodes[3 * model.shells[4 * e + k] + c];
     const A = shellFrame(X).area;
-    const me = A * model.shellT[e] * model.mat.rho;
+    const me = A * model.shellT[e] * model.mat.rho * (model.shellMassF ? model.shellMassF[e] : 1);
     total += me;
     const g = model.groups[model.shellGroup[e]];
     groupMass[g] = (groupMass[g] || 0) + me;

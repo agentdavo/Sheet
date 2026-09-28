@@ -4,7 +4,8 @@ import { THREE } from './scene.js';
 import { GROUPS } from '../chassis/mesh.js';
 
 // categorical (identity) - fixed order, validated dark-mode steps
-export const GROUP_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+export const GROUP_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767', '#b9b2a2'];
+const CRITICAL = new THREE.Color('#e25d5d');
 // sequential single-hue ramp (magnitude): dark -> light
 const RAMP = ['#0d366b', '#104281', '#184f95', '#1c5cab', '#256abf', '#2a78d6', '#3987e5', '#5598e7', '#6da7ec', '#86b6ef', '#9ec5f4', '#b7d3f6', '#cde2fb'];
 const rampRGB = RAMP.map((c) => new THREE.Color(c));
@@ -246,7 +247,7 @@ export class ChassisView {
       this.shellMesh.material = this.matLit;
       const present = [...new Set(m.shellGroup)].sort((a, b) => a - b);
       legend.append(el('div', 'lt', 'Panel groups'));
-      for (const g of present) legend.append(elHTML('div', 'cat', `<i style="background:${GROUP_COLORS[g]}"></i>${GROUP_NAMES[GROUPS[g]]} · ${m.shellT[m.shellGroup.indexOf(g)].toFixed(1)} mm`));
+      for (const g of present) legend.append(elHTML('div', 'cat', `<i style="background:${GROUP_COLORS[g]}"></i>${GROUP_NAMES[GROUPS[g]]} · ${m.shellT[m.shellGroup.indexOf(g)].toFixed(1)} mm${GROUPS[g] === 'doublers' ? ' total' : ''}`));
       legend.classList.remove('hidden');
       return;
     }
@@ -255,6 +256,20 @@ export class ChassisView {
     if (d === 'thickness') { vals = m.shellT; label = 'Sheet thickness'; unit = 'mm'; }
     else if (this.field && this.field.type === d) { vals = this.field.values; perNode = this.field.perNode; label = this.field.label; unit = this.field.unit; digits = this.field.digits ?? 2; }
     else { this.shellMesh.material = this.matMetal; legend.classList.add('hidden'); return; }
+    if (this.field && this.field.threshold && d === this.field.type) {
+      // utilisation-style field: sequential ramp up to the threshold, critical colour beyond it
+      const th = this.field.threshold;
+      for (let e = 0; e < ns; e++) { const v = vals[e]; if (v >= th) setQuad(e, CRITICAL); else { rampColor(v / th, c); setQuad(e, c); } }
+      col.needsUpdate = true;
+      this.shellMesh.material = this.matFlat;
+      legend.append(el('div', 'lt', label));
+      const bar = el('div', 'bar'); bar.style.background = RAMP_CSS;
+      const ticks = el('div', 'ticks');
+      for (const t of [0, 0.5, 1]) ticks.append(el('span', '', (t * th).toFixed(1)));
+      legend.append(bar, ticks, elHTML('div', 'cat', `<i style="background:#e25d5d"></i>≥ ${th} - buckles below design load`));
+      legend.classList.remove('hidden');
+      return;
+    }
     let lo = Infinity, hi = -Infinity;
     const sample = perNode ? Array.from(vals) : Array.from(vals).slice(0, ns);
     for (const v of sample) { if (v < lo) lo = v; if (v > hi) hi = v; }
@@ -316,7 +331,7 @@ export class ChassisView {
 }
 
 const GROUP_NAMES = {
-  floor: 'Floor', sills: 'Sills', tunnel: 'Tunnel', bulkheads: 'Bulkheads', deck: 'Deck', frontRails: 'Front rails', rearRails: 'Rear rails', battery: 'Battery',
+  floor: 'Floor', sills: 'Sills', tunnel: 'Tunnel', bulkheads: 'Bulkheads', deck: 'Deck', frontRails: 'Front rails', rearRails: 'Rear rails', battery: 'Battery', doublers: 'Doubler zones',
 };
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
 function elHTML(tag, cls, html) { const e = el(tag, cls); e.innerHTML = html; return e; }

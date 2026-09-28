@@ -25,10 +25,12 @@ export const PRESETS = {
       rearRails: true, rrRailY: [380, 500], rrRailZ: [130, 710],
       rollHoop: true, hoopH: 1060, cage: true, roofH: 1060, frontHoop: false,
       rearBrace: true, engine: false, engineEnd: -2700, bumpers: true,
-      hpSpread: 110, mesh: 75,
+      hpSpread: 110, diaphragmPitch: 0, doublerR: 0,
+      beads: { on: false, pitch: 125, depth: 6, width: 40, groups: ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'battery'] },
+      mesh: 75,
     },
     material: 'al5754',
-    gauges: { floor: 3.0, sills: 3.0, tunnel: 2.5, bulkheads: 2.5, deck: 2.0, frontRails: 3.0, rearRails: 3.0, battery: 2.0 },
+    gauges: { floor: 3.0, sills: 3.0, tunnel: 2.5, bulkheads: 2.5, deck: 2.0, frontRails: 3.0, rearRails: 3.0, battery: 2.0, doublers: 0 },
     tubes: { hoop: { od: 45, wall: 2.5, mat: 's355' }, cage: { od: 38, wall: 2.0, mat: 's355' }, brace: { od: 35, wall: 2.0, mat: 's355' }, engine: { od: 80, wall: 6, mat: 'al6082' } },
     suspension: {
       front: corner({
@@ -63,6 +65,7 @@ export const PRESETS = {
     ],
     unsprung: { front: 42, rear: 48 },
     ride: { fF: 1.7, fR: 1.9, rollGrad: 0.75, lltd: 48, tyreRateF: 280, tyreRateR: 320, dampRatio: 0.35 },
+    fabrication: { joining: 'seam', process: 'tig' },
     analysis: { targetK: 35000 },
   }),
 
@@ -81,10 +84,12 @@ export const PRESETS = {
       rearRails: false, rrRailY: [200, 300], rrRailZ: [60, 400],
       rollHoop: true, hoopH: 1000, cage: false, roofH: 1000, frontHoop: true,
       rearBrace: false, engine: true, engineEnd: -2150, bumpers: false,
-      hpSpread: 110, mesh: 60,
+      hpSpread: 110, diaphragmPitch: 0, doublerR: 0,
+      beads: { on: false, pitch: 125, depth: 6, width: 40, groups: ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'battery'] },
+      mesh: 60,
     },
     material: 'al5754',
-    gauges: { floor: 2.5, sills: 2.0, tunnel: 1.6, bulkheads: 2.5, deck: 2.0, frontRails: 2.0, rearRails: 2.0, battery: 1.6 },
+    gauges: { floor: 2.5, sills: 2.0, tunnel: 1.6, bulkheads: 2.5, deck: 2.0, frontRails: 2.0, rearRails: 2.0, battery: 1.6, doublers: 0 },
     tubes: { hoop: { od: 40, wall: 2.5, mat: 'crmo' }, cage: { od: 30, wall: 1.6, mat: 'crmo' }, brace: { od: 30, wall: 1.6, mat: 'crmo' }, engine: { od: 70, wall: 6, mat: 'al6082' } },
     suspension: {
       front: corner({
@@ -118,6 +123,7 @@ export const PRESETS = {
     ],
     unsprung: { front: 18, rear: 22 },
     ride: { fF: 3.2, fR: 3.5, rollGrad: 0.25, lltd: 50, tyreRateF: 220, tyreRateR: 260, dampRatio: 0.5 },
+    fabrication: { joining: 'seam', process: 'tig' },
     analysis: { targetK: 12000 },
   }),
 
@@ -136,10 +142,12 @@ export const PRESETS = {
       rearRails: true, rrRailY: [360, 500], rrRailZ: [150, 760],
       rollHoop: true, hoopH: 1100, cage: true, roofH: 1100, frontHoop: false,
       rearBrace: true, engine: false, engineEnd: -3000, bumpers: true,
-      hpSpread: 110, mesh: 90,
+      hpSpread: 110, diaphragmPitch: 0, doublerR: 0,
+      beads: { on: false, pitch: 125, depth: 6, width: 40, groups: ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'battery'] },
+      mesh: 90,
     },
     material: 'al6082',
-    gauges: { floor: 3.0, sills: 3.5, tunnel: 2.0, bulkheads: 2.5, deck: 2.0, frontRails: 3.0, rearRails: 3.0, battery: 2.5 },
+    gauges: { floor: 3.0, sills: 3.5, tunnel: 2.0, bulkheads: 2.5, deck: 2.0, frontRails: 3.0, rearRails: 3.0, battery: 2.5, doublers: 0 },
     tubes: { hoop: { od: 50, wall: 3, mat: 'al6082' }, cage: { od: 45, wall: 3, mat: 'al6082' }, brace: { od: 40, wall: 2.5, mat: 'al6082' }, engine: { od: 80, wall: 6, mat: 'al6082' } },
     suspension: {
       front: corner({
@@ -174,12 +182,30 @@ export const PRESETS = {
     ],
     unsprung: { front: 50, rear: 55 },
     ride: { fF: 1.35, fR: 1.5, rollGrad: 1.0, lltd: 55, tyreRateF: 300, tyreRateR: 320, dampRatio: 0.3 },
+    fabrication: { joining: 'seam', process: 'tig' },
     analysis: { targetK: 30000 },
   }),
 };
 
+// Same car as `supercar`, re-engineered as a welded 1.0/1.2 mm stainless tub:
+// swage-beaded panels, sill/tunnel diaphragms and 2 mm doublers under 70 mm pick-up brackets.
+PRESETS.supercar_ss = () => {
+  const c = PRESETS.supercar();
+  c.type = 'supercar_ss';
+  c.name = 'Mid-engine supercar - welded 1.0/1.2 mm stainless 304L, beaded';
+  c.material = 'ss304L';
+  c.gauges = { floor: 1.2, sills: 1.2, tunnel: 1.0, bulkheads: 1.0, deck: 1.0, frontRails: 1.2, rearRails: 1.2, battery: 1.0, doublers: 2.0 };
+  Object.assign(c.chassis, {
+    diaphragmPitch: 400, doublerR: 110, hpSpread: 70,
+    beads: { on: true, pitch: 125, depth: 6, width: 40, groups: ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'frontRails', 'rearRails', 'battery'] },
+  });
+  c.fabrication = { joining: 'stitch', process: 'laser', stitchLen: 25, stitchPitch: 50 };
+  return c;
+};
+
 export const PRESET_LIST = [
   ['supercar', 'Supercar (mid-engine)'],
+  ['supercar_ss', 'Supercar - welded stainless'],
   ['single', 'Single seater'],
   ['ev', 'EV skateboard'],
 ];

@@ -2,6 +2,8 @@
 import { shellFrame } from '../fea/elements.js';
 import { GROUP_LABELS } from '../chassis/mesh.js';
 import { MATERIALS, TUBE_MATERIALS } from '../fea/materials.js';
+import { beadsFor, beadSection } from '../chassis/stiffening.js';
+import { fabricationSummary } from '../chassis/fabrication.js';
 
 const csv = (rows) => rows.map((r) => r.map((c) => (typeof c === 'string' && /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n');
 
@@ -14,14 +16,22 @@ export function cutList(cfg, mesh) {
     for (let k = 0; k < 4; k++) for (let c = 0; c < 3; c++) X[3 * k + c] = m.nodes[3 * m.shells[4 * e + k] + c];
     area[m.shellPanel[e]] += shellFrame(X).area;
   }
-  const rows = [['Item', 'Group', 'Material', 'Thickness (mm)', 'Blank A (mm)', 'Blank B (mm)', 'Area (m2)', 'Mass (kg)']];
+  const rows = [['Item', 'Group', 'Material', 'Thickness (mm)', 'Blank A (mm)', 'Blank B (mm)', 'Area (m2)', 'Mass (kg)', 'Forming']];
   let total = 0;
   mesh.panels.forEach((p, i) => {
     const t = cfg.gauges[p.group];
-    const kg = area[i] * t * mat.rho;
+    const bead = beadsFor(cfg, p.group);
+    const mf = bead ? beadSection(t, bead).massF : 1;
+    const kg = area[i] * t * mat.rho * mf;
     total += kg;
-    rows.push([p.name, GROUP_LABELS[p.group], mat.name, t.toFixed(2), p.size[0].toFixed(0), p.size[1].toFixed(0), (area[i] / 1e6).toFixed(4), kg.toFixed(2)]);
+    rows.push([p.name, GROUP_LABELS[p.group], mat.name, t.toFixed(2), p.size[0].toFixed(0), p.size[1].toFixed(0), (area[i] / 1e6).toFixed(4), kg.toFixed(2),
+      bead ? `swage beads ${bead.depth}x${bead.width} mm @ ${bead.pitch} mm` : 'flat']);
   });
+  if (mesh.fabrication.doublerArea > 0) {
+    const kg = mesh.fabrication.doublerArea * cfg.gauges.doublers * mat.rho;
+    total += kg;
+    rows.push([`Pick-up doublers (${mesh.fabrication.doublerCount} plates)`, GROUP_LABELS.doublers, mat.name, cfg.gauges.doublers.toFixed(2), `r ${cfg.chassis.doublerR}`, '', (mesh.fabrication.doublerArea / 1e6).toFixed(4), kg.toFixed(2), 'perimeter welded']);
+  }
   rows.push([]);
   rows.push(['Tube', 'Class', 'Material', 'Wall (mm)', 'OD (mm)', 'Length (mm)', '', 'Mass (kg)']);
   for (const b of mesh.beamInfo) {
@@ -40,6 +50,9 @@ export function cutList(cfg, mesh) {
   }
   rows.push([]);
   rows.push(['TOTAL', '', '', '', '', '', '', total.toFixed(2)]);
+  const f = fabricationSummary(cfg, mesh);
+  rows.push([]);
+  rows.push(['Joining', f.processLabel, f.fab.joining, '', '', '', '', '', `joint line ${f.seam.toFixed(1)} m; weld ${f.weldLen.toFixed(1)} m; est. ${(f.minutes / 60).toFixed(1)} h arc-on`]);
   return csv(rows);
 }
 

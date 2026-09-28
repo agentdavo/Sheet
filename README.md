@@ -21,6 +21,7 @@ npm run build      # static bundle in dist/
 | **Suspension** | Full 3-D double-wishbone solve for heave, roll and steer. Direct coil-over, or push/pull-rod with rocker. Camber, toe/**bump steer**, KPI, caster, scrub, trail, front-view IC and **roll centre** (height and migration in roll), roll camber compensation, track change, **motion ratio** and progression, side-view IC with **anti-dive / anti-squat / anti-lift**, **Ackermann** and steering ratio. Live 3-D pose with IC/RC construction lines. Draggable hardpoints |
 | **Vehicle** | Mass, CG and inertias (FE structure plus components and unsprung mass), ride frequencies, wheel rates, roll gradient, **LLTD**. Chassis-vs-suspension roll-stiffness ratio, with a twin-spring model of how chassis flex shifts LLTD |
 | **Optimisers** | Suspension geometry (bounded Nelder–Mead over chosen hardpoint coordinates; studies for bump steer, roll centre and camber, anti-geometry, Ackermann, motion ratio) · **sheet gauge sizing** for minimum mass at a torsional-stiffness target (optimality criteria with analytic membrane/bending sensitivities, then snapped to standard gauges) · ride and roll set-up (springs, ARBs, dampers) · weight distribution · geometry design sweeps |
+| **Thin-sheet design** | **Shear-buckling check**: each bay (sheet area between welded-on panels and diaphragms) is compared with plate buckling theory (orthotropic when beaded), with shear/compression interaction and a yield cap. It reports a limit twist torque against a design twist (a multiple of the front-wheel-lift torque) and colours each panel by utilisation. **Swage beads** (pitch, depth, width, which panel groups); **sill/tunnel diaphragms**; **weld-on doublers** at pick-ups; stainless 304L/316L/301 grades. A fabrication summary gives joint and weld length, arc-on time, a distortion-risk heuristic and material/process warnings (for example 304 sensitisation, TIG distortion on thin stainless, stitch- and spot-weld stiffness caveats). A **welded-stainless supercar** preset uses all of these |
 | **Views & export** | 3D or 4-view (front / side / plan / perspective), X-ray, FE mesh, mode animation, deformed shape. Export design JSON, sheet **cut list CSV**, hardpoints CSV, **Nastran .bdf**, PNG |
 
 ## Conventions
@@ -36,6 +37,7 @@ npm run build      # static bundle in dist/
 - A beam cantilever is exact, and free-free beam modes match the analytic value to within 8 % (lumped mass).
 - Kinematic closure (link lengths) holds through travel and steer. Parallel equal-length arms give zero camber change and zero bump steer.
 - The bump-steer optimiser removes an injected error, and every preset meets its own ride and LLTD targets.
+- An FE shear panel reproduces the plate shear-buckling load within 2 %. Bead stiffness scales with depth², diaphragms split the sill bays, and the stiffened stainless tub carries more than twice the buckling torque of plain 1 mm sheet.
 
 ## Layout
 

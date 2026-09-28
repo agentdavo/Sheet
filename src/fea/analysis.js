@@ -64,8 +64,14 @@ export async function runAnalyses(mesh, cfg, which, opts = {}) {
       return { x: s.x, deg: ((u[6 * s.nL + 2] - u[6 * s.nR + 2]) / (yl - yr)) * RAD2DEG };
     });
     const hpDisp = mesh.hardpoints.map((h) => u[6 * h.node + 2]);
+    // peak sheet stress in the elements the pick-up brackets bolt to (doubler effect shows here)
+    const attach = new Set(mesh.hardpoints.flatMap((h) => h.attach));
+    let hpPeak = 0;
+    for (let e = 0; e < model.shellT.length; e++) {
+      for (let k = 0; k < 4; k++) if (attach.has(model.shells[4 * e + k])) { hpPeak = Math.max(hpPeak, post.shellVM[e]); break; }
+    }
     out.torsion = {
-      K, thetaDeg: theta * RAD2DEG, torqueNm, u, post, twist, hpDisp,
+      K, thetaDeg: theta * RAD2DEG, torqueNm, u, post, twist, hpDisp, hpPeak,
       solver: r.method, ms: r.ms, info: r.info,
       groupEnergy: groupEnergy(model, post),
     };

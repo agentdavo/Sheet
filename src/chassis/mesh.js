@@ -7,11 +7,13 @@
 // bulkhead, height taper of the nose) - a smooth map, so conformity is preserved.
 import { MATERIALS, TUBE_MATERIALS, tubeSection } from '../fea/materials.js';
 import { chassisPoints } from '../suspension/kinematics.js';
+import { applyGauges } from './stiffening.js';
 
-export const GROUPS = ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'frontRails', 'rearRails', 'battery'];
+export const GROUPS = ['floor', 'sills', 'tunnel', 'bulkheads', 'deck', 'frontRails', 'rearRails', 'battery', 'doublers'];
 export const GROUP_LABELS = {
   floor: 'Floor pan', sills: 'Sills / side boxes', tunnel: 'Centre tunnel', bulkheads: 'Bulkheads',
   deck: 'Scuttle / footwell deck', frontRails: 'Front rails / towers', rearRails: 'Rear rails', battery: 'Battery enclosure',
+  doublers: 'Doubler zones (sheet + doubler)',
 };
 
 const RIGID = { A: 5000, Iy: 5e6, Iz: 5e6, J: 1e7, E: 2.1e6, G: 8e5, rho: 0, c: 40, rigid: true, name: 'rigid' };
@@ -40,6 +42,14 @@ export function buildChassis(cfg) {
   const bayX = [];
   if (ch.battery) for (let i = 1; i < ch.batteryBays; i++) bayX.push(ch.xFront + ((ch.xSeat - ch.xFront) * i) / ch.batteryBays);
   keysX.push(...bayX);
+  // internal diaphragms in the sills / tunnel stop thin box sections distorting
+  const diaX = [];
+  if (ch.diaphragmPitch > 0) {
+    const L = ch.xFront - ch.xSeat;
+    const n = Math.max(1, Math.round(L / ch.diaphragmPitch));
+    for (let i = 1; i < n; i++) diaX.push(ch.xSeat + (L * i) / n);
+  }
+  keysX.push(...diaX);
   const keysY = [0, Wi, W];
   if (ch.tunnel) keysY.push(ch.tunnelHalf);
   if (hasFR) keysY.push(...frY);
@@ -90,7 +100,7 @@ export function buildChassis(cfg) {
     }
     return id;
   };
-  const shells = [], shellGroup = [], shellPanel = [];
+  const shells = [], shellGroup = [], shellPanel = [], shellIJ = [];
   const quadSeen = new Set();
   const panels = [];
   const between = (G, a, b) => {
@@ -118,6 +128,7 @@ export function buildChassis(cfg) {
         shells.push(...q);
         shellGroup.push(gi);
         shellPanel.push(pi);
+        shellIJ.push(i, j);
         count++;
       }
     if (!count) return;
@@ -127,7 +138,7 @@ export function buildChassis(cfg) {
     for (const b of B.slice(1)) edge.push(toPhys(...P(A[A.length - 1], b)));
     for (const a of [...A].reverse().slice(1)) edge.push(toPhys(...P(a, B[B.length - 1])));
     for (const b of [...B].reverse().slice(1)) edge.push(toPhys(...P(A[0], b)));
-    panels.push({ name, group, axis, start, count, outline: edge, size: [Math.abs(A[A.length - 1] - A[0]), Math.abs(B[B.length - 1] - B[0])] });
+    panels.push({ name, group, axis, at, A, B, P, start, count, outline: edge, size: [Math.abs(A[A.length - 1] - A[0]), Math.abs(B[B.length - 1] - B[0])] });
   };
 
   // ---- tub
@@ -150,6 +161,10 @@ export function buildChassis(cfg) {
     for (const s of [1, -1]) addPanel(`Footwell side ${s > 0 ? 'LH' : 'RH'}`, 'deck', 'y', s * W, [ch.xDash, ch.xFront], [F + ch.sillH, F + ch.deckH]);
     addPanel('Dash bulkhead', 'bulkheads', 'x', ch.xDash, [-W, W], [F + ch.sillH, F + ch.deckH]);
   }
+  diaX.forEach((x, i) => {
+    for (const s of [1, -1]) addPanel(`Sill diaphragm ${s > 0 ? 'LH' : 'RH'} ${i + 1}`, 'sills', 'x', x, [s * Wi, s * W], [F, F + ch.sillH]);
+    if (ch.tunnel) addPanel(`Tunnel diaphragm ${i + 1}`, 'tunnel', 'x', x, [-ch.tunnelHalf, ch.tunnelHalf], [F, F + ch.tunnelH]);
+  });
   if (ch.battery) {
     addPanel('Battery cover', 'battery', 'z', F + ch.batteryH, xs, [-Wi, Wi]);
     bayX.forEach((x, i) => addPanel(`Battery cross-member ${i + 1}`, 'battery', 'x', x, [-Wi, Wi], [F, F + ch.batteryH]));
@@ -169,6 +184,47 @@ export function buildChassis(cfg) {
   if (hasRR) rail('Rear rail', 'rearRails', [ch.xRear, ch.xSeat], rrY, rrZ);
 
   const nShellNodes = nodes.length / 3;
+
+  // ------------------------------------------------------------ buckling bays
+  // A bay is a region of one panel bounded by lines where other panels are joined to it
+  // (continuous support). Found by recursively splitting each panel along fully supported lines.
+  const nodePanels = Array.from({ length: nShellNodes }, () => new Set());
+  for (let e = 0; e < shells.length / 4; e++) for (let k = 0; k < 4; k++) nodePanels[shells[4 * e + k]].add(shellPanel[e]);
+  const multi = (id) => id !== undefined && nodePanels[id].size >= 2;
+  const bays = [];
+  const shellBay = new Int32Array(shells.length / 4).fill(-1);
+  const pd = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+  panels.forEach((pn, pi) => {
+    const { A, B, P } = pn;
+    const id = (i, j) => nodeMap.get(nodeKey(...P(A[i], B[j])));
+    const split = (a0, a1, b0, b1) => {
+      for (let i = a0 + 1; i < a1; i++) {
+        let ok = true;
+        for (let j = b0; j <= b1 && ok; j++) ok = multi(id(i, j));
+        if (ok) { split(a0, i, b0, b1); split(i, a1, b0, b1); return; }
+      }
+      for (let j = b0 + 1; j < b1; j++) {
+        let ok = true;
+        for (let i = a0; i <= a1 && ok; i++) ok = multi(id(i, j));
+        if (ok) { split(a0, a1, b0, j); split(a0, a1, j, b1); return; }
+      }
+      const jm = Math.round((b0 + b1) / 2), im = Math.round((a0 + a1) / 2);
+      const LA = pd(toPhys(...P(A[a0], B[jm])), toPhys(...P(A[a1], B[jm])));
+      const LB = pd(toPhys(...P(A[im], B[b0])), toPhys(...P(A[im], B[b1])));
+      bays.push({ panel: pi, name: pn.name, group: pn.group, a0, a1, b0, b1, LA, LB, elems: [] });
+    };
+    split(0, A.length - 1, 0, B.length - 1);
+  });
+  const bayIndex = new Map();
+  bays.forEach((b, k) => { if (!bayIndex.has(b.panel)) bayIndex.set(b.panel, []); bayIndex.get(b.panel).push(k); });
+  for (let e = 0; e < shells.length / 4; e++) {
+    const i = shellIJ[2 * e], j = shellIJ[2 * e + 1];
+    for (const k of bayIndex.get(shellPanel[e]) || []) {
+      const b = bays[k];
+      if (i >= b.a0 && i < b.a1 && j >= b.b0 && j < b.b1) { shellBay[e] = k; b.elems.push(e); break; }
+    }
+  }
+
   const nodeXYZ = (i) => [nodes[3 * i], nodes[3 * i + 1], nodes[3 * i + 2]];
   const nearest = (p, pool = null, k = 1, exclude = null) => {
     const best = [];
@@ -331,6 +387,51 @@ export function buildChassis(cfg) {
     }
   }
 
+  // ------------------------------------------------------------ pick-up doublers
+  const shellBaseGroup = Int32Array.from(shellGroup);
+  const DOUBLER = GROUPS.indexOf('doublers');
+  const doublerElems = new Set();
+  if ((cfg.gauges.doublers ?? 0) > 0 && (ch.doublerR ?? 0) > 0) {
+    const ns = shells.length / 4;
+    const cen = new Float64Array(3 * ns);
+    for (let e = 0; e < ns; e++) for (let k = 0; k < 4; k++) for (let c = 0; c < 3; c++) cen[3 * e + c] += nodes[3 * shells[4 * e + k] + c] / 4;
+    for (const hp of hardpoints) {
+      const shellAttach = hp.attach.filter((i) => i < nShellNodes);
+      if (!shellAttach.length) continue;
+      const c0 = nodeXYZ(shellAttach[0]);
+      const R2 = ch.doublerR * ch.doublerR;
+      for (let e = 0; e < ns; e++) {
+        const d2 = (cen[3 * e] - c0[0]) ** 2 + (cen[3 * e + 1] - c0[1]) ** 2 + (cen[3 * e + 2] - c0[2]) ** 2;
+        if (d2 <= R2) doublerElems.add(e);
+      }
+    }
+    for (const e of doublerElems) shellGroup[e] = DOUBLER;
+  }
+
+  // ------------------------------------------------------------ weld seams
+  const edgePanels = new Map();
+  const edgeLen = (a, b) => pd(nodeXYZ(a), nodeXYZ(b));
+  let doublerWeld = 0;
+  const dEdges = new Map();
+  for (let e = 0; e < shells.length / 4; e++) {
+    for (let k = 0; k < 4; k++) {
+      const a = shells[4 * e + k], b = shells[4 * e + ((k + 1) % 4)];
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+      if (!edgePanels.has(key)) edgePanels.set(key, { a, b, panels: new Set() });
+      edgePanels.get(key).panels.add(shellPanel[e]);
+      if (doublerElems.has(e)) dEdges.set(key, (dEdges.get(key) || 0) + 1);
+    }
+  }
+  let seamLength = 0;
+  for (const { a, b, panels: ps } of edgePanels.values()) if (ps.size >= 2) seamLength += edgeLen(a, b);
+  for (const [key, c] of dEdges) if (c === 1) { const { a, b } = edgePanels.get(key); doublerWeld += edgeLen(a, b); }
+  let doublerArea = 0;
+  for (const e of doublerElems) {
+    const q = [0, 1, 2, 3].map((k) => nodeXYZ(shells[4 * e + k]));
+    const d1 = q[2].map((v, i) => v - q[0][i]), d2 = q[3].map((v, i) => v - q[1][i]);
+    doublerArea += 0.5 * Math.hypot(d1[1] * d2[2] - d1[2] * d2[1], d1[2] * d2[0] - d1[0] * d2[2], d1[0] * d2[1] - d1[1] * d2[0]);
+  }
+
   // ------------------------------------------------------------ bookkeeping
   const twistStations = [];
   for (const x of GX) {
@@ -347,13 +448,14 @@ export function buildChassis(cfg) {
     if (Math.abs(z - zs) < 1e-6 && x < ch.xDash - 1 && x > ch.xSeat + 1 && Math.abs(y) >= SY(Wi) - 1e-6) floorNodes.push(i);
   }
   const mat = MATERIALS[cfg.material];
-  const shellT = shellGroup.map((g) => cfg.gauges[GROUPS[g]] ?? 2);
   const model = {
     nodes: Float64Array.from(nodes),
     shells: Int32Array.from(shells),
-    shellT: Float64Array.from(shellT),
+    shellT: new Float64Array(shellGroup.length),
     shellGroup: Int32Array.from(shellGroup),
+    shellBaseGroup,
     shellPanel: Int32Array.from(shellPanel),
+    shellBay,
     groups: GROUPS,
     mat: { E: mat.E, nu: mat.nu, rho: mat.rho },
     beams: Int32Array.from(beams),
@@ -361,11 +463,15 @@ export function buildChassis(cfg) {
     beamUp: Float64Array.from(beamUp),
     sections,
   };
-  return {
-    model, panels, beamInfo, hardpoints, twistStations, floorNodes,
-    stats: { nodes: nodes.length / 3, shells: shells.length / 4, beams: beams.length / 2, dofs: (nodes.length / 3) * 6 },
+  const mesh = {
+    model, panels: panels.map(({ P, ...rest }) => rest), beamInfo, hardpoints, twistStations, floorNodes,
+    bays: bays.map(({ elems, ...rest }) => ({ ...rest, elems: Int32Array.from(elems) })),
+    fabrication: { seamLength, doublerWeld, doublerArea, doublerCount: doublerElems.size ? hardpoints.length : 0, diaphragms: diaX.length },
+    stats: { nodes: nodes.length / 3, shells: shells.length / 4, beams: beams.length / 2, dofs: (nodes.length / 3) * 6, bays: bays.length },
     toPhys,
   };
+  applyGauges(mesh, cfg);
+  return mesh;
 }
 
 /** Distribute component masses (for modal analysis) to their nearest structural nodes. */
